@@ -1,6 +1,5 @@
-import { datadogRum } from "@datadog/browser-rum"
-import { useRumAction, useRumError } from "@datadog/rum-react-integration"
 import { useWeb3React } from "@web3-react/core"
+import { usePostHogContext } from "components/_app/PostHogProvider"
 import { useWeb3ConnectionManager } from "components/_app/Web3ConnectionManager"
 import { randomBytes } from "crypto"
 import { createStore, del, get, set } from "idb-keyval"
@@ -11,17 +10,23 @@ import { AddressConnectionProvider, User } from "types"
 import { bufferToHex, strToBuffer } from "utils/bufferUtils"
 import fetcher from "utils/fetcher"
 import useLocalStorage from "./useLocalStorage"
+import { mutateOptionalAuthSWRKey } from "./useSWRWithOptionalAuth"
 import {
   SignedValdation,
   useSubmitWithSignWithParamKeyPair,
 } from "./useSubmit/useSubmit"
-import { mutateOptionalAuthSWRKey } from "./useSWRWithOptionalAuth"
 import useToast from "./useToast"
 
 type StoredKeyPair = {
   keyPair: CryptoKeyPair
   pubKey: string
 }
+
+/**
+ * This is a generic RPC internal error code, but we are only using it for testing
+ * personal_sign errors, which should mean that the user rejected the request
+ */
+const RPC_INTERNAL_ERROR_CODE = -32603
 
 type AddressLinkParams =
   | ({
@@ -61,26 +66,17 @@ const generateKeyPair = async () => {
       ["sign", "verify"]
     )
 
-    try {
-      const generatedPubKey = await window.crypto.subtle.exportKey(
-        "raw",
-        generatedKeys.publicKey
-      )
+    const generatedPubKey = await window.crypto.subtle.exportKey(
+      "raw",
+      generatedKeys.publicKey
+    )
 
-      const generatedPubKeyHex = bufferToHex(generatedPubKey)
-      keyPair.pubKey = generatedPubKeyHex
-      keyPair.keyPair = generatedKeys
-      return keyPair
-    } catch {
-      throw new Error("Pubkey export error")
-    }
-  } catch (error) {
-    if (error?.code !== 4001) {
-      datadogRum.addError(`Keypair generation error`, {
-        error: error?.message || error?.toString?.() || error,
-      })
-    }
-    throw error
+    const generatedPubKeyHex = bufferToHex(generatedPubKey)
+    keyPair.pubKey = generatedPubKeyHex
+    keyPair.keyPair = generatedKeys
+    return keyPair
+  } catch {
+    throw new Error("Pubkey export error")
   }
 }
 
@@ -160,9 +156,7 @@ const usePublicUserData = (address?: string) => {
 }
 
 const useKeyPair = () => {
-  // Using the default Datadog implementation here, so the useDatadog, useUser, and useKeypair hooks don't call each other
-  const addDatadogAction = useRumAction("trackingAppAction")
-  const addDatadogError = useRumError()
+  const { captureEvent } = usePostHogContext()
 
   const { account } = useWeb3React()
 
@@ -170,11 +164,6 @@ const useKeyPair = () => {
     useWeb3ConnectionManager()
 
   const { data: user, error: userError } = usePublicUserData()
-
-  const defaultCustomAttributes = {
-    userId: user?.id,
-    userAddress: account?.toLowerCase(),
-  }
 
   const {
     data: { keyPair, pubKey },
@@ -206,9 +195,9 @@ const useKeyPair = () => {
     {
       onSuccess: (isKeyPairValid) => {
         if (!isKeyPairValid) {
-          addDatadogAction("Invalid keypair", {
-            ...defaultCustomAttributes,
-            data: { userId: user?.id, pubKey: keyPair.publicKey },
+          captureEvent("Invalid keypair", {
+            userId: user?.id,
+            pubKey: keyPair.publicKey,
           })
 
           toast({
@@ -254,28 +243,19 @@ const useKeyPair = () => {
         "Please sign this message, so we can generate, and assign you a signing key pair. This is needed so you don't have to sign every Guild interaction.",
       onError: (error) => {
         console.error("setKeyPair error", error)
-        if (error?.code !== 4001) {
-          addDatadogError(
-            `Failed to set keypair`,
-            {
-              ...defaultCustomAttributes,
-              error: error?.message || error?.toString?.() || error,
-            },
-            "custom"
-          )
+        if (error?.code !== RPC_INTERNAL_ERROR_CODE) {
+          captureEvent(`Failed to set keypair`, { error })
         }
 
         try {
           window.localStorage.removeItem("userId")
           mutate(unstable_serialize(["shouldLinkToUser", user?.id]))
         } catch (err) {
-          addDatadogError(
+          captureEvent(
             `Failed to remove userId from localStorage after unsuccessful account link`,
             {
-              ...defaultCustomAttributes,
               error: err?.message || err?.toString?.() || err,
-            },
-            "custom"
+            }
           )
         }
       },
@@ -297,20 +277,15 @@ const useKeyPair = () => {
           try {
             window.localStorage.removeItem("userId")
           } catch (error) {
-            addDatadogError(
+            captureEvent(
               `Failed to remove userId from localStorage after account link`,
               {
-                ...defaultCustomAttributes,
                 error: error?.message || error?.toString?.() || error,
-              },
-              "custom"
+              }
             )
           }
-
-          addDatadogAction("Successfully linked address")
         } else {
           mutateKeyPair(newKeyPair)
-          addDatadogAction("Successfully generated keypair")
         }
       },
     }
@@ -364,14 +339,9 @@ const useKeyPair = () => {
           body.pubKey = generatedKeyPair.pubKey
         } catch (err) {
           if (error?.code !== 4001) {
-            addDatadogError(
-              `Keypair generation error`,
-              {
-                ...defaultCustomAttributes,
-                error: err?.message || err?.toString?.() || err,
-              },
-              "custom"
-            )
+            captureEvent(`Keypair generation error`, {
+              error: err?.message || err?.toString?.() || err,
+            })
           }
           throw err
         }

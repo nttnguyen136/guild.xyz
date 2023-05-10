@@ -23,8 +23,6 @@ module.exports = {
         "@chakra-ui/anatomy": false,
         "@chakra-ui/react": false,
         "@chakra-ui/theme-tools": false,
-        "@datadog/browser-rum": false,
-        "@datadog/rum-react-integration": false,
         "@web3-react/coinbase-wallet": false,
         "@web3-react/core": false,
         "@web3-react/metamask": false,
@@ -36,7 +34,6 @@ module.exports = {
         stream: false,
         "crypto-addr-codec": false,
         "@ensdomains/address-encoder": false,
-        dotbit: false,
       }
     }
 
@@ -170,17 +167,6 @@ module.exports = {
         {
           source: "/sitemap.xml",
           destination: "/api/sitemap.xml",
-        },
-        {
-          source: "/api/ddrum",
-          has: [
-            {
-              type: "query",
-              key: "ddforward",
-              value: "https://(?<ddforward>.*)",
-            },
-          ],
-          destination: "https://:ddforward",
         },
         {
           source: "/api/posthog/:path*",

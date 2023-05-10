@@ -1,14 +1,15 @@
 import { Text, ToastId, useColorModeValue } from "@chakra-ui/react"
-import { useWeb3React } from "@web3-react/core"
+import Button from "components/common/Button"
+import useMemberships from "components/explorer/hooks/useMemberships"
 import useAccess from "components/[guild]/hooks/useAccess"
 import useGuild from "components/[guild]/hooks/useGuild"
 import useUser from "components/[guild]/hooks/useUser"
-import useDatadog from "components/_app/Datadog/useDatadog"
-import Button from "components/common/Button"
-import useMemberships from "components/explorer/hooks/useMemberships"
+import { useMintCredentialContext } from "components/[guild]/Requirements/components/GuildCheckout/MintCredentialContext"
+import { usePostHogContext } from "components/_app/PostHogProvider"
 import { SignedValdation, useSubmitWithSign } from "hooks/useSubmit"
 import useToast from "hooks/useToast"
-import { TwitterLogo } from "phosphor-react"
+import { useRouter } from "next/router"
+import { CircleWavyCheck } from "phosphor-react"
 import { useRef } from "react"
 import { PlatformName } from "types"
 import fetcher from "utils/fetcher"
@@ -36,9 +37,7 @@ export type JoinData = {
 }
 
 const useJoin = (onSuccess?: () => void) => {
-  const { addDatadogAction, addDatadogError } = useDatadog()
-
-  const { account } = useWeb3React()
+  const { captureEvent } = usePostHogContext()
 
   const access = useAccess()
   const guild = useGuild()
@@ -46,7 +45,7 @@ const useJoin = (onSuccess?: () => void) => {
 
   const toast = useToast()
   const toastIdRef = useRef<ToastId>()
-  const tweetButtonBackground = useColorModeValue("blackAlpha.100", undefined)
+  const mintButtonBackground = useColorModeValue("blackAlpha.100", undefined)
 
   const { mutate } = useMemberships()
 
@@ -65,6 +64,11 @@ const useJoin = (onSuccess?: () => void) => {
       return body
     })
 
+  const mintCredentialContext = useMintCredentialContext()
+  // Destructuring it separately, since we don't have a MintCredentialContext on the POAP minting page
+  const { onOpen } = mintCredentialContext ?? {}
+  const { pathname } = useRouter()
+
   const useSubmitResponse = useSubmitWithSign<Response>(submit, {
     onSuccess: (response) => {
       access?.mutate?.()
@@ -82,8 +86,6 @@ const useJoin = (onSuccess?: () => void) => {
         return
       }
 
-      addDatadogAction(`Successfully joined a guild`)
-
       setTimeout(() => {
         mutate(
           (prev) => [
@@ -99,33 +101,29 @@ const useJoin = (onSuccess?: () => void) => {
       toastIdRef.current = toast({
         title: `Successfully joined guild`,
         duration: 8000,
-        description: (
-          <>
-            <Text>Let others know as well by sharing it on Twitter</Text>
-            <Button
-              as="a"
-              href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
-                `Just joined the ${guild.name} guild. Continuing my brave quest to explore all corners of web3!
-guild.xyz/${guild.urlName}`
-              )}`}
-              target="_blank"
-              bg={tweetButtonBackground}
-              leftIcon={<TwitterLogo weight="fill" />}
-              size="sm"
-              onClick={() => toast.close(toastIdRef.current)}
-              mt={3}
-              mb="1"
-              borderRadius="lg"
-            >
-              Share
-            </Button>
-          </>
-        ),
+        description:
+          pathname === "/[guild]" &&
+          guild.featureFlags.includes("GUILD_CREDENTIAL") ? (
+            <>
+              <Text>Let others know as well by minting it on-chain</Text>
+              <Button
+                leftIcon={<CircleWavyCheck weight="fill" />}
+                size="sm"
+                mt={3}
+                mb="1"
+                bg={mintButtonBackground}
+                borderRadius="lg"
+                onClick={onOpen}
+              >
+                Mint credential
+              </Button>
+            </>
+          ) : undefined,
         status: "success",
       })
     },
-    onError: (err) => {
-      addDatadogError(`Guild join error`, { error: err })
+    onError: (error) => {
+      captureEvent(`Guild join error`, { error })
     },
   })
 
